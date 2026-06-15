@@ -8,6 +8,11 @@ from PIL import Image
 from tkinter import filedialog, messagebox
 
 import mod_logic
+import urllib.request
+import json
+import webbrowser
+
+__version__ = "v1.1.0"
 
 # ── 日誌設定：寫入 exe 同目錄下的 log 檔 ──
 def get_log_path():
@@ -255,6 +260,15 @@ class App(ctk.CTk):
         )
         self.title_label.pack(side="left")
 
+        self.update_label = ctk.CTkLabel(
+            self.header_frame,
+            text="",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#4caf50",
+            cursor="hand2",
+        )
+        self.update_label.bind("<Button-1>", lambda e: webbrowser.open(self._update_url) if hasattr(self, "_update_url") else None)
+
         self.mod_count_label = ctk.CTkLabel(
             self.header_frame,
             text="No folder selected",
@@ -475,6 +489,9 @@ class App(ctk.CTk):
                                        anchor="w",
                                        wraplength=720)
         self.inst_label.pack(side="left")
+
+        # 啟動背景檢查更新
+        threading.Thread(target=self._check_for_updates, daemon=True).start()
 
 
     # ─────────────────── 資料夾選擇 ───────────────────
@@ -971,6 +988,25 @@ class App(ctk.CTk):
         self.select_all_var.set(False)
         self._render_page()
 
+    def _check_for_updates(self):
+        try:
+            url = "https://api.github.com/repos/vct603/Teardown-Mod-Manager/releases/latest"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                latest_version = data.get("tag_name", "")
+                html_url = data.get("html_url", "")
+                
+                # 簡單的比對，如果 tag_name 大於 __version__，或者是不同且都不為空
+                if latest_version and latest_version.startswith("v") and latest_version != __version__:
+                    self.after(0, self._show_update_available, latest_version, html_url)
+        except Exception as e:
+            log.warning(f"Failed to check for updates: {e}")
+
+    def _show_update_available(self, version, url):
+        self._update_url = url
+        self.update_label.configure(text=f"✨ Update available: {version}")
+        self.update_label.pack(side="left", padx=(15, 0))
 
 
 if __name__ == "__main__":
