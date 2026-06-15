@@ -222,6 +222,52 @@ class ModFrame(ctk.CTkFrame):
         self.desc_lbl.configure(text=desc)
 
 
+class TagSelectionDialog(ctk.CTkToplevel):
+    def __init__(self, master, current_tag, unique_tags, callback):
+        super().__init__(master)
+        self.title("Select Tag")
+        self.geometry("300x400")
+        self.transient(master)
+        self.grab_set()
+        
+        self.callback = callback
+        self.unique_tags = unique_tags
+        
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", self.update_list)
+        
+        self.search_entry = ctk.CTkEntry(self, textvariable=self.search_var, placeholder_text="Search tags...")
+        self.search_entry.pack(fill="x", padx=10, pady=10)
+        
+        self.scroll = ctk.CTkScrollableFrame(self, fg_color=THEME["surface"], border_color=THEME["card_border"], border_width=1)
+        self.scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        self.buttons = []
+        self.update_list()
+        
+    def update_list(self, *args):
+        for btn in self.buttons:
+            btn.destroy()
+        self.buttons.clear()
+        
+        q = self.search_var.get().lower()
+        filtered = [t for t in self.unique_tags if q in t.lower()]
+        
+        if q == "" or "all tags".startswith(q):
+            btn = ctk.CTkButton(self.scroll, text="All Tags", fg_color=THEME["surface_alt"], text_color=THEME["text"], command=lambda: self.select("All Tags"))
+            btn.pack(fill="x", pady=2)
+            self.buttons.append(btn)
+            
+        for tag in filtered:
+            btn = ctk.CTkButton(self.scroll, text=tag, fg_color="transparent", text_color=THEME["text"], hover_color=THEME["surface_alt"], anchor="w", command=lambda t=tag: self.select(t))
+            btn.pack(fill="x", pady=2)
+            self.buttons.append(btn)
+            
+    def select(self, tag):
+        self.callback(tag)
+        self.destroy()
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -397,19 +443,13 @@ class App(ctk.CTk):
         )
         self.tab_count_label.pack(side="right", padx=(12, 4))
         
-        self.tag_filter_var = ctk.StringVar(value="All Tags")
-        self.tag_combobox = ctk.CTkOptionMenu(
+        self.tag_combobox = ctk.CTkButton(
             self.tab_frame,
-            variable=self.tag_filter_var,
-            values=["All Tags"],
-            command=self._on_tag_change,
+            text="Tag: All Tags ▾",
+            command=self._open_tag_dialog,
             font=ctk.CTkFont(size=12),
             fg_color=THEME["surface_alt"],
-            button_color=THEME["card_border"],
-            button_hover_color=THEME["accent_dark"],
-            dropdown_fg_color=THEME["surface"],
-            dropdown_hover_color=THEME["surface_alt"],
-            dropdown_text_color=THEME["text"],
+            hover_color=THEME["accent_dark"],
             text_color=THEME["text"],
             corner_radius=6,
             width=140,
@@ -674,9 +714,9 @@ class App(ctk.CTk):
         for m in self.mods:
             if "tags_list" in m:
                 unique_tags.update(m["tags_list"])
-        self.tag_filter_var.set("All Tags")
+        self.unique_tags = sorted(list(unique_tags))
         self.current_tag = "All Tags"
-        self.tag_combobox.configure(values=["All Tags"] + sorted(list(unique_tags)))
+        self.tag_combobox.configure(text="Tag: All Tags ▾")
         self._loading = False
         self._enable_buttons()
         
@@ -980,9 +1020,15 @@ class App(ctk.CTk):
 
 
     # ─────────────────── 分頁標籤切換 ───────────────────
+    def _open_tag_dialog(self):
+        if not hasattr(self, "unique_tags"):
+            return
+        dialog = TagSelectionDialog(self, self.current_tag, self.unique_tags, self._on_tag_change)
+        
     def _on_tag_change(self, value):
         self.current_tag = value
         self.current_page = 1
+        self.tag_combobox.configure(text=f"Tag: {value[:10]}... ▾" if len(value) > 12 else f"Tag: {value} ▾")
         self._render_page()
 
     def _on_tab_change(self, value):
