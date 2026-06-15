@@ -858,14 +858,16 @@ class App(ctk.CTk):
 
     # ─────────────────── 全選 ───────────────────
     def update_selected_count(self):
+        filtered_mods = self._get_filtered_mods()
         selected_count = sum(1 for m in filtered_mods if m.get("selected"))
-        total_items = len(self.mods)
+        total_items = len(filtered_mods)
         if hasattr(self, 'selected_count_label'):
             self.selected_count_label.configure(text=f"Selected: {selected_count} / {total_items}")
 
     def toggle_select_all(self):
         val = self.select_all_var.get()
-        for mod in self.mods:
+        filtered_mods = self._get_filtered_mods()
+        for mod in filtered_mods:
             mod["selected"] = val
             
         # 只需要更新可見的卡片
