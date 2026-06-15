@@ -150,6 +150,7 @@ def load_single_mod(mod_dir, mod_id, cache_dict=None):
         "name": name,
         "author": author,
         "description": description,
+        "tags_list": info.get("tags_list", []),
         "size_bytes": size_bytes,
         "size_str": format_size(size_bytes),
         "update_time": mtime,
