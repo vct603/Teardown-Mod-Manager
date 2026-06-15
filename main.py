@@ -12,7 +12,7 @@ import urllib.request
 import json
 import webbrowser
 
-__version__ = "v1.1.0"
+__version__ = "v1.1.1"
 
 # ── 日誌設定：寫入 exe 同目錄下的 log 檔 ──
 def get_log_path():
