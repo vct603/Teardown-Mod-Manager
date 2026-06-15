@@ -190,8 +190,18 @@ class ModFrame(ctk.CTkFrame):
         else:
             self.img_label.configure(image="", text="No Preview")
 
-        name_text = f"{mod_data['name']}  (ID: {mod_data['id']})"
-        self.name_lbl.configure(text=name_text)
+        if mod_data.get("has_spawn_bak"):
+            spawn_tag = "  [Spawn Disabled]"
+            name_color = "#e8a435"
+        elif mod_data.get("has_spawn_txt"):
+            spawn_tag = "  [Spawnable]"
+            name_color = "#4caf50"
+        else:
+            spawn_tag = ""
+            name_color = THEME["text"]
+
+        name_text = f"{mod_data['name']}  (ID: {mod_data['id']}){spawn_tag}"
+        self.name_lbl.configure(text=name_text, text_color=name_color)
 
         update_str = mod_data.get('update_time_str', 'Unknown')
         meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}"
@@ -221,6 +231,7 @@ class App(ctk.CTk):
         self._loading = False
         self.current_page = 1
         self.items_per_page = 50
+        self.current_tab = "All Mods"  # 當前分頁標籤
 
         # ── 頂部列 ──
         self.top_frame = ctk.CTkFrame(
@@ -338,6 +349,35 @@ class App(ctk.CTk):
         self.progress_frame.pack(fill="x", padx=14, pady=(0, 8))
         self.progress_frame.pack_forget()  # 初始隱藏
 
+        # ── 分頁標籤列 (All Mods / Spawn Disabled) ──
+        self.tab_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.tab_frame.pack(fill="x", padx=14, pady=(0, 6))
+
+        self.tab_segmented = ctk.CTkSegmentedButton(
+            self.tab_frame,
+            values=["All Mods", "Spawnable", "Spawn Disabled"],
+            command=self._on_tab_change,
+            font=ctk.CTkFont(size=14),
+            fg_color=THEME["surface_alt"],
+            selected_color="#555555",
+            selected_hover_color="#666666",
+            unselected_color=THEME["surface"],
+            unselected_hover_color=THEME["card_border"],
+            text_color=THEME["text"],
+            text_color_disabled=THEME["subtle"],
+            corner_radius=6,
+        )
+        self.tab_segmented.set("All Mods")
+        self.tab_segmented.pack(side="left", padx=0, pady=0)
+
+        self.tab_count_label = ctk.CTkLabel(
+            self.tab_frame,
+            text="",
+            text_color=THEME["muted"],
+            font=ctk.CTkFont(size=12),
+        )
+        self.tab_count_label.pack(side="right", padx=(12, 4))
+
         # ── 中間滾動區域 ──
         self.scroll_frame = ctk.CTkScrollableFrame(
             self,
@@ -399,6 +439,22 @@ class App(ctk.CTk):
                                        corner_radius=6,
                                        **button_colors("secondary"))
         self.scan_btn.pack(side="left", padx=0, pady=12)
+
+        self.disable_spawn_btn = ctk.CTkButton(
+            self.bottom_frame, text="Disable Spawnables",
+            command=self.disable_spawnables_action,
+            corner_radius=6,
+            **button_colors("danger"),
+        )
+        self.disable_spawn_btn.pack(side="left", padx=(10, 0), pady=12)
+
+        self.recover_spawn_btn = ctk.CTkButton(
+            self.bottom_frame, text="Recover Spawnables",
+            command=self.recover_spawnables_action,
+            corner_radius=6,
+            **button_colors("secondary"),
+        )
+        self.recover_spawn_btn.pack(side="left", padx=(10, 0), pady=12)
 
         self.script_btn = ctk.CTkButton(self.bottom_frame, text="Copy Unsubscribe Script",
                                          command=self.copy_script,
@@ -468,6 +524,8 @@ class App(ctk.CTk):
         self.select_btn.configure(state="disabled")
         self.delete_btn.configure(state="disabled")
         self.scan_btn.configure(state="disabled")
+        self.disable_spawn_btn.configure(state="disabled")
+        self.recover_spawn_btn.configure(state="disabled")
         self.script_btn.configure(state="disabled")
 
         # 顯示進度列
@@ -579,14 +637,44 @@ class App(ctk.CTk):
         self._render_page()
         log.info("Load complete and UI rendered")
 
+    def _get_filtered_mods(self):
+        """根據當前分頁標籤過濾模組列表"""
+        if self.current_tab == "Spawn Disabled":
+            return [m for m in self.mods if m.get("has_spawn_bak")]
+        elif self.current_tab == "Spawnable":
+            return [m for m in self.mods if m.get("has_spawn_txt")]
+        return self.mods
+
     def _render_page(self):
         """根據 self.current_page 渲染對應的 50 個模組卡片"""
         # 1. 隱藏現有卡片
         for frame in self.mod_frame_pool:
             frame.pack_forget()
+
+        # 1.5 根據分頁標籤過濾
+        filtered_mods = self._get_filtered_mods()
         
+        # 更新分頁標籤的計數
+        spawn_disabled_count = sum(1 for m in self.mods if m.get("has_spawn_bak"))
+        spawnable_count = sum(1 for m in self.mods if m.get("has_spawn_txt"))
+        if self.current_tab == "Spawn Disabled":
+            self.tab_count_label.configure(text=f"Showing {len(filtered_mods)} spawn-disabled mods")
+        elif self.current_tab == "Spawnable":
+            self.tab_count_label.configure(text=f"Showing {len(filtered_mods)} spawnable mods")
+        else:
+            tags = []
+            if spawnable_count > 0:
+                tags.append(f"{spawnable_count} spawnable")
+            if spawn_disabled_count > 0:
+                tags.append(f"{spawn_disabled_count} disabled")
+            
+            if tags:
+                self.tab_count_label.configure(text=f"({', '.join(tags)})")
+            else:
+                self.tab_count_label.configure(text="")
+
         # 2. 計算索引
-        total_items = len(self.mods)
+        total_items = len(filtered_mods)
         total_pages = max(1, (total_items + self.items_per_page - 1) // self.items_per_page)
         if self.current_page > total_pages:
             self.current_page = total_pages
@@ -596,7 +684,7 @@ class App(ctk.CTk):
         
         # 3. 渲染
         for i, mod_idx in enumerate(range(start_idx, end_idx)):
-            mod = self.mods[mod_idx]
+            mod = filtered_mods[mod_idx]
             
             # Lazy load image
             preview = mod.get("preview_path")
@@ -622,7 +710,7 @@ class App(ctk.CTk):
         # 4. 更新分頁標籤與按鈕狀態
         self.page_label.configure(text=f"Page {self.current_page} / {total_pages}")
 
-        selected_count = sum(1 for m in self.mods if m.get("selected"))
+        selected_count = sum(1 for m in filtered_mods if m.get("selected"))
         if hasattr(self, 'selected_count_label'):
             self.selected_count_label.configure(text=f"Selected: {selected_count} / {total_items}")
 
@@ -650,16 +738,20 @@ class App(ctk.CTk):
         self.select_btn.configure(state="normal")
         self.delete_btn.configure(state="normal")
         self.scan_btn.configure(state="normal")
+        self.disable_spawn_btn.configure(state="normal")
+        self.recover_spawn_btn.configure(state="normal")
         self.script_btn.configure(state="normal")
 
     def _show_progress(self):
         """顯示進度列：重新排列 pack 順序以避免 CTkScrollableFrame 的 before= 問題"""
         self.progress_frame.pack_forget()
+        self.tab_frame.pack_forget()
         self.scroll_frame.pack_forget()
         self.pagination_frame.pack_forget()
         self.bottom_frame.pack_forget()
         self.inst_frame.pack_forget()
         self.progress_frame.pack(fill="x", padx=14, pady=(0, 8))
+        self.tab_frame.pack(fill="x", padx=14, pady=(0, 6))
         self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
         self.pagination_frame.pack(fill="x", padx=14, pady=(0, 8))
         self.bottom_frame.pack(fill="x", padx=14, pady=(0, 8))
@@ -671,7 +763,7 @@ class App(ctk.CTk):
 
     # ─────────────────── 全選 ───────────────────
     def update_selected_count(self):
-        selected_count = sum(1 for m in self.mods if m.get("selected"))
+        selected_count = sum(1 for m in filtered_mods if m.get("selected"))
         total_items = len(self.mods)
         if hasattr(self, 'selected_count_label'):
             self.selected_count_label.configure(text=f"Selected: {selected_count} / {total_items}")
@@ -830,6 +922,55 @@ class App(ctk.CTk):
             "3. Paste the script, then press Enter to run it."
         )
         show_info(self, "Success", msg)
+
+
+    # ─────────────────── 分頁標籤切換 ───────────────────
+    def _on_tab_change(self, value):
+        self.current_tab = value
+        self.current_page = 1
+        self._render_page()
+
+    # ─────────────────── Spawnable 管理 ───────────────────
+    def disable_spawnables_action(self):
+        """停用選取模組的 spawnables"""
+        selected = [m for m in self.mods if m.get("selected") and m.get("has_spawn_txt")]
+        if not selected:
+            show_info(self, "Info", "Please select mods with spawnables to disable.")
+            return
+
+        if ask_yesno(self, "Confirm",
+            f"Disable spawnables for {len(selected)} selected mod(s)?\n\n"
+            "This will rename spawn.txt to spawn.txt.bak.\n"
+            "You can recover them later from the 'Spawn Disabled' tab."):
+            count = mod_logic.disable_spawnables([m["path"] for m in selected])
+            self._refresh_spawn_state()
+            show_info(self, "Done", f"Successfully disabled spawnables for {count} mod(s).")
+
+    def recover_spawnables_action(self):
+        """還原選取模組的 spawnables"""
+        selected = [m for m in self.mods if m.get("selected") and m.get("has_spawn_bak")]
+        if not selected:
+            show_info(self, "Info", "Please select mods with disabled spawnables to recover.")
+            return
+
+        if ask_yesno(self, "Confirm",
+            f"Recover spawnables for {len(selected)} selected mod(s)?\n\n"
+            "This will rename spawn.txt.bak back to spawn.txt."):
+            count = mod_logic.recover_spawnables([m["path"] for m in selected])
+            self._refresh_spawn_state()
+            show_info(self, "Done", f"Successfully recovered spawnables for {count} mod(s).")
+
+    def _refresh_spawn_state(self):
+        """重新偵測所有模組的 spawn 狀態並更新 UI"""
+        for m in self.mods:
+            spawn_txt = os.path.join(m["path"], 'spawn.txt')
+            spawn_bak = os.path.join(m["path"], 'spawn.txt.bak')
+            m["has_spawn_txt"] = os.path.exists(spawn_txt)
+            m["has_spawn_bak"] = os.path.exists(spawn_bak)
+            m["selected"] = False
+        self.select_all_var.set(False)
+        self._render_page()
+
 
 
 if __name__ == "__main__":

@@ -133,6 +133,12 @@ def load_single_mod(mod_dir, mod_id, cache_dict=None):
 
     description = info.get("description", "").strip()
 
+    # 偵測 spawn.txt 和 spawn.txt.bak 的存在狀態
+    spawn_txt_path = os.path.join(mod_path, 'spawn.txt')
+    spawn_bak_path = os.path.join(mod_path, 'spawn.txt.bak')
+    has_spawn_txt = os.path.exists(spawn_txt_path)
+    has_spawn_bak = os.path.exists(spawn_bak_path)
+
     return {
         "id": mod_id,
         "path": mod_path,
@@ -143,7 +149,9 @@ def load_single_mod(mod_dir, mod_id, cache_dict=None):
         "size_str": format_size(size_bytes),
         "update_time": mtime,
         "update_time_str": update_time_str,
-        "preview_path": preview_path if os.path.exists(preview_path) else None
+        "preview_path": preview_path if os.path.exists(preview_path) else None,
+        "has_spawn_txt": has_spawn_txt,
+        "has_spawn_bak": has_spawn_bak,
     }
 
 def check_unavailable_mods_api(mod_ids, progress_callback=None):
@@ -218,3 +226,37 @@ def delete_local_mods(mod_paths, expected_base_folder):
         except Exception as e:
             print(f"Error deleting {path}: {e}")
     return deleted_count
+
+
+def disable_spawnables(mod_paths):
+    """將選取模組的 spawn.txt 改名為 spawn.txt.bak 以停用生成物品"""
+    success_count = 0
+    for mod_path in mod_paths:
+        spawn_txt = os.path.join(mod_path, 'spawn.txt')
+        spawn_bak = os.path.join(mod_path, 'spawn.txt.bak')
+        if os.path.exists(spawn_txt):
+            try:
+                if os.path.exists(spawn_bak):
+                    os.remove(spawn_bak)  # 移除舊的備份，以防 Steam 下載了新的 spawn.txt
+                os.rename(spawn_txt, spawn_bak)
+                success_count += 1
+            except Exception as e:
+                print(f"Error disabling spawn for {mod_path}: {e}")
+    return success_count
+
+
+def recover_spawnables(mod_paths):
+    """將選取模組的 spawn.txt.bak 改回 spawn.txt 以還原生成物品"""
+    success_count = 0
+    for mod_path in mod_paths:
+        spawn_bak = os.path.join(mod_path, 'spawn.txt.bak')
+        spawn_txt = os.path.join(mod_path, 'spawn.txt')
+        if os.path.exists(spawn_bak):
+            try:
+                if os.path.exists(spawn_txt):
+                    os.remove(spawn_txt)  # 移除 Steam 可能自動補回的 spawn.txt
+                os.rename(spawn_bak, spawn_txt)
+                success_count += 1
+            except Exception as e:
+                print(f"Error recovering spawn for {mod_path}: {e}")
+    return success_count
