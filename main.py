@@ -1005,7 +1005,7 @@ class App(ctk.CTk):
 
     def _show_update_available(self, version, url):
         self._update_url = url
-        self.update_label.configure(text=f"✨ Update available: {version}")
+        self.update_label.configure(text=f"Update available: {version}")
         self.update_label.pack(side="left", padx=(15, 0))
 
 
