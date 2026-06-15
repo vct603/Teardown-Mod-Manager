@@ -209,7 +209,11 @@ class ModFrame(ctk.CTkFrame):
         self.name_lbl.configure(text=name_text, text_color=name_color)
 
         update_str = mod_data.get('update_time_str', 'Unknown')
-        meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}"
+        tags_str = ", ".join(mod_data.get('tags_list', []))
+        if tags_str:
+            meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}  |  Tags: {tags_str}"
+        else:
+            meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}"
         self.meta_lbl.configure(text=meta_text)
 
         desc = mod_data.get('description', '')
@@ -237,6 +241,7 @@ class App(ctk.CTk):
         self.current_page = 1
         self.items_per_page = 50
         self.current_tab = "All Mods"  # 當前分頁標籤
+        self.current_tag = "All Tags"  # 當前選擇的標籤篩選
 
         # ── 頂部列 ──
         self.top_frame = ctk.CTkFrame(
@@ -391,6 +396,25 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=12),
         )
         self.tab_count_label.pack(side="right", padx=(12, 4))
+        
+        self.tag_filter_var = ctk.StringVar(value="All Tags")
+        self.tag_combobox = ctk.CTkOptionMenu(
+            self.tab_frame,
+            variable=self.tag_filter_var,
+            values=["All Tags"],
+            command=self._on_tag_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=THEME["surface_alt"],
+            button_color=THEME["card_border"],
+            button_hover_color=THEME["accent_dark"],
+            dropdown_fg_color=THEME["surface"],
+            dropdown_hover_color=THEME["surface_alt"],
+            dropdown_text_color=THEME["text"],
+            text_color=THEME["text"],
+            corner_radius=6,
+            width=140,
+        )
+        self.tag_combobox.pack(side="right", padx=(12, 0))
 
         # ── 中間滾動區域 ──
         self.scroll_frame = ctk.CTkScrollableFrame(
@@ -644,6 +668,15 @@ class App(ctk.CTk):
         self.mods = loaded_mods
         self.current_page = 1
         self._hide_progress()
+        
+        # 蒐集所有標籤
+        unique_tags = set()
+        for m in self.mods:
+            if "tags_list" in m:
+                unique_tags.update(m["tags_list"])
+        self.tag_filter_var.set("All Tags")
+        self.current_tag = "All Tags"
+        self.tag_combobox.configure(values=["All Tags"] + sorted(list(unique_tags)))
         self._loading = False
         self._enable_buttons()
         
@@ -655,12 +688,17 @@ class App(ctk.CTk):
         log.info("Load complete and UI rendered")
 
     def _get_filtered_mods(self):
-        """根據當前分頁標籤過濾模組列表"""
+        """根據當前分頁標籤與標籤篩選過濾模組列表"""
+        filtered = self.mods
         if self.current_tab == "Spawn Disabled":
-            return [m for m in self.mods if m.get("has_spawn_bak")]
+            filtered = [m for m in filtered if m.get("has_spawn_bak")]
         elif self.current_tab == "Spawnable":
-            return [m for m in self.mods if m.get("has_spawn_txt")]
-        return self.mods
+            filtered = [m for m in filtered if m.get("has_spawn_txt")]
+            
+        if self.current_tag != "All Tags":
+            filtered = [m for m in filtered if self.current_tag in m.get("tags_list", [])]
+            
+        return filtered
 
     def _render_page(self):
         """根據 self.current_page 渲染對應的 50 個模組卡片"""
@@ -942,6 +980,11 @@ class App(ctk.CTk):
 
 
     # ─────────────────── 分頁標籤切換 ───────────────────
+    def _on_tag_change(self, value):
+        self.current_tag = value
+        self.current_page = 1
+        self._render_page()
+
     def _on_tab_change(self, value):
         self.current_tab = value
         self.current_page = 1

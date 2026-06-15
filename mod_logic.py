@@ -32,6 +32,11 @@ def parse_info_txt(file_path):
             val = parts[1].strip()
             if key in info:
                 info[key] = val
+    
+    # 解析 tags 成為清單
+    tags_str = info.get("tags", "")
+    info["tags_list"] = [t.strip() for t in tags_str.split(',')] if tags_str else []
+    
     return info
 
 def get_folder_size(folder_path):
