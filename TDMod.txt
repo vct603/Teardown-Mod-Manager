@@ -1,0 +1,131 @@
+/*
+# unsubscribe_unavailable.js
+ This script will go through your Steam Workshop mod subscriptions for
+ Teardown mods and unsubscribe from any that are unavailable (e.g. private).
+## Usage:
+ 1. Open a tab to any page on the steamcommunity.com domain
+ 2. Open developer tools (Ctrl+Shift+I or F12)
+ 3. Go to "Console" tab
+ 4. Copy and paste the contents of this file into it
+ 4.a.: Don't do this unless you trust me. Malicious code in the developer
+       console can steal your Steam account among other things.
+ 4.b.: Firefox will prevent you from pasting and warn you about the
+       aformentioned danger. Follow the instructions in the warning to enable
+       pasting.
+ 5. Wait for it to finish
+## Rationale:
+ Recently, many Teardown players have reported hitching at regular intervals.
+ It has been determined that the cause of the hitching is being subscribed to
+ mods that are no longer available. An unavailable mod is a mod that you can't
+ access, e.g. a mod that was subscribed to while public that is now private.
+ This script will go through all of your subscribed Teardown mods and
+ unsubscribe from any that are unavailable. Note that you can't subscribe to a
+ mod that is unavailable, so this process is irreversible. You can change the
+ "const UNSUBSCRIBE = true;" to "const UNSUBSCRIBE = false;" and it won't
+ unsubscribe. Instead, it will just tell you which mods were unavailable in
+ the console.
+*/
+"use strict";
+(async () => {
+	const UNSUBSCRIBE = true;
+	let i = 0;
+	let mod_total;
+	const textarea = document.createElement("textarea");
+	const bad = [];
+	let page_count;
+	let mod_count = 0;
+	let session_id;
+	while (1) {
+		++i;
+		if (page_count === undefined) {
+			if (i !== 1) {
+				throw `i is ${i} when page_count is undefined`;
+			}
+		} else if (i > page_count) {
+			break;
+		}
+		const response = await fetch(`https://steamcommunity.com/my/myworkshopfiles/?appid=1167630&browsefilter=mysubscriptions&p=${i}&numperpage=30&l=english`);
+		if (!response.ok) {
+			throw `${response.status} ${response.statusText}`;
+		}
+		const text = await response.text();
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(text, (response.headers.get("content-type") ?? "text/html").split(";")[0]);
+		if (mod_total === undefined) {
+			mod_total = parseInt(doc.getElementsByClassName("workshopBrowsePagingInfo")[0].innerText.trim().match(/^Showing \d+\-\d+ of (\d+) entries$/)[1]);
+			page_count = Math.ceil(mod_total/30);
+		}
+		if (session_id === undefined) {
+			session_id = doc.querySelector("[name=\"sessionid\"]").value;
+		}
+		const queue = [];
+		Array.prototype.forEach.call(doc.getElementsByTagName("script"), script => {
+			const json = (script.textContent.match(/^\s*SharedFileBindMouseHover\s*\(\s*\"Subscription\d+\"\s*,\s*true\s*,\s*(.+)\s*\)\s*;\s*$/) ?? [])[1];
+			if (!json) {
+				return;
+			}
+			queue.push(JSON.parse(json));
+		});
+		for (let j=0; j<queue.length; ++j) {
+			++mod_count;
+			const data = queue[j];
+			const id = parseInt(data.id);
+			const app_id = parseInt(data.appid);
+			textarea.innerHTML = data.title;
+			const title = textarea.value;
+			console.log("%d/%d: Checking if mod ID %s ('%s') is available", mod_count, mod_total, id, title);
+			const response = await fetch(`https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`);
+			if (!response.ok) {
+				throw `${response.status} ${response.statusText}`;
+			}
+			const text = await response.text();
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(text, (response.headers.get("content-type") ?? "text/html").split(";")[0]);
+			if (
+				doc.getElementsByClassName("error_ctn").length === 0
+				//&& id !== 2992268368
+			) {
+				continue;
+			}
+			bad.push({
+				data: data,
+				id: id,
+				app_id: app_id,
+				title: title,
+				mod_count: mod_count,
+				i: i,
+				j: j,
+				response: response,
+				text: text,
+				doc: doc,
+			});
+			console.info("%d/%d: Got error when trying to access mod ID %s ('%s')", mod_count, mod_total, id, title);
+		}
+		//break;
+	}
+	console.log("Found %d unavailable mods out of %d total checked across %d pages", bad.length, mod_count, i);
+	for (let j=0; j<bad.length; ++j) {
+		const bad_mod = bad[j];
+		console.info("Mod ID %s on page %d/%d is no longer available.", bad_mod.id, bad_mod.i, page_count);
+		console.log("Technical information: %o", bad_mod);
+		if (UNSUBSCRIBE) {
+			console.log("Unsubscribing");
+			const response = await fetch("https://steamcommunity.com/sharedfiles/unsubscribe", {
+				method: "POST",
+				body: new URLSearchParams({
+					id: bad_mod.id,
+					appid: bad_mod.app_id,
+					sessionid: session_id,
+				}),
+			});
+			if (!response.ok) {
+				console.error("Expected successful response, got %d %s. Full response: %o", response.status, response.statusText, response);
+				continue;
+			}
+			const json = await response.json();
+			if (json.success !== 1) {
+				console.error("Expected success value of 1, got %d. Full response: %o", json.success, json);
+			}
+		}
+	}
+})();

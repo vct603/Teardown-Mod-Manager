@@ -1,0 +1,19 @@
+# Python 快取
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller 產生的打包與暫存資料夾
+build/
+dist/
+
+# 日誌檔與快取檔
+*.log
+teardown_mod_manager.log
+.tdmod_cache.json
+
+# 開發工具、環境
+.vscode/
+.idea/
+venv/
+env/
