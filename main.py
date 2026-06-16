@@ -11,261 +11,11 @@ import mod_logic
 import urllib.request
 import json
 import webbrowser
+import collections
 
-__version__ = "v1.1.1"
-
-# ── 日誌設定：寫入 exe 同目錄下的 log 檔 ──
-def get_log_path():
-    if getattr(sys, 'frozen', False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "teardown_mod_manager.log")
-
-logging.basicConfig(
-    filename=get_log_path(),
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    encoding="utf-8"
-)
-log = logging.getLogger("TDModManager")
-
-ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("dark-blue")
-
-THEME = {
-    "bg": "#1a1a1a",
-    "surface": "#242424",
-    "surface_alt": "#303030",
-    "card": "#2a2a2a",
-    "card_border": "#444444",
-    "text": "#f2f2f2",
-    "muted": "#b8b8b8",
-    "subtle": "#8a8a8a",
-    "accent": "#f2f2f2",
-    "accent_hover": "#ffffff",
-    "accent_dark": "#d0d0d0",
-    "danger": "#5c5c5c",
-    "danger_hover": "#707070",
-    "track": "#3a3a3a",
-}
-
-
-def button_colors(kind="primary"):
-    if kind == "danger":
-        return {
-            "fg_color": THEME["danger"],
-            "hover_color": THEME["danger_hover"],
-            "text_color": THEME["text"],
-        }
-    if kind == "secondary":
-        return {
-            "fg_color": THEME["surface_alt"],
-            "hover_color": THEME["card_border"],
-            "border_width": 1,
-            "border_color": THEME["card_border"],
-            "text_color": THEME["text"],
-        }
-    return {
-        "fg_color": THEME["accent"],
-        "hover_color": THEME["accent_hover"],
-        "text_color": "#111111",
-    }
-
-class CTkPopup(ctk.CTkToplevel):
-    def __init__(self, master, title, message, is_yesno=False, is_error=False):
-        super().__init__(master)
-        self.title(title)
-        width = 520 if len(message) > 160 else 400
-        height = 300 if len(message) > 160 else 200
-        self.geometry(f"{width}x{height}")
-        self.configure(fg_color=THEME["bg"])
-        self.transient(master)
-        self.grab_set()
-        self.attributes("-topmost", True)
-        
-        self.result = False
-        
-        # 使視窗置中於主視窗
-        self.update_idletasks()
-        x = master.winfo_x() + (master.winfo_width() - self.winfo_width()) // 2
-        y = master.winfo_y() + (master.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
-        
-        lbl_color = "#ffffff" if is_error else THEME["text"]
-        ctk.CTkLabel(self, text=message, wraplength=width - 54, text_color=lbl_color,
-                     font=ctk.CTkFont(size=14)).pack(expand=True, padx=24, pady=20)
-        
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(side="bottom", pady=20)
-        
-        if is_yesno:
-            ctk.CTkButton(btn_frame, text="Cancel", width=100, corner_radius=6,
-                          **button_colors("secondary"),
-                          command=self._on_no).pack(side="left", padx=10)
-            ctk.CTkButton(btn_frame, text="OK", width=100, corner_radius=6,
-                          **button_colors("danger"),
-                          command=self._on_yes).pack(side="right", padx=10)
-        else:
-            ctk.CTkButton(btn_frame, text="OK", width=100, corner_radius=6,
-                          **button_colors(),
-                          command=self._on_yes).pack(pady=10)
-                          
-    def _on_yes(self):
-        self.result = True
-        self.destroy()
-        
-    def _on_no(self):
-        self.result = False
-        self.destroy()
-
-def show_info(master, title, msg):
-    popup = CTkPopup(master, title, msg, is_yesno=False)
-    master.wait_window(popup)
-    return popup.result
-
-def show_error(master, title, msg):
-    popup = CTkPopup(master, title, msg, is_yesno=False, is_error=True)
-    master.wait_window(popup)
-    return popup.result
-
-def ask_yesno(master, title, msg):
-    popup = CTkPopup(master, title, msg, is_yesno=True)
-    master.wait_window(popup)
-    return popup.result
-
-
-class ModFrame(ctk.CTkFrame):
-    """單個模組的顯示卡片"""
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
-        self.mod_data = None
-        self.configure(
-            fg_color=THEME["card"],
-            border_width=1,
-            border_color=THEME["card_border"],
-            corner_radius=8,
-        )
-
-        self.grid_columnconfigure(2, weight=1)
-
-        self.checkbox_var = ctk.BooleanVar(value=False)
-        self.checkbox = ctk.CTkCheckBox(
-            self, text="", variable=self.checkbox_var, width=30,
-            command=self._on_check, fg_color=THEME["accent"],
-            hover_color=THEME["accent_dark"], border_color=THEME["subtle"],
-            checkmark_color="#111111"
-        )
-        self.checkbox.grid(row=0, column=0, rowspan=3, padx=(14, 8), pady=12, sticky="ns")
-
-        self.img_label = ctk.CTkLabel(self, text="No Preview", width=120, height=90,
-                                      fg_color=THEME["surface_alt"],
-                                      text_color=THEME["subtle"], corner_radius=6)
-        self.img_label.grid(row=0, column=1, rowspan=3, padx=(0, 10), pady=12)
-
-        self.name_lbl = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=15, weight="bold"),
-                                     text_color=THEME["text"], anchor="w")
-        self.name_lbl.grid(row=0, column=2, padx=(4, 14), pady=(12, 0), sticky="sw")
-
-        self.meta_lbl = ctk.CTkLabel(self, text="", text_color=THEME["muted"], anchor="w")
-        self.meta_lbl.grid(row=1, column=2, padx=(4, 14), pady=(2, 0), sticky="w")
-
-        self.desc_lbl = ctk.CTkLabel(self, text="", justify="left", wraplength=450,
-                                     text_color=THEME["text"], anchor="w")
-        self.desc_lbl.grid(row=2, column=2, padx=(4, 14), pady=(2, 12), sticky="nw")
-
-    def _on_check(self):
-        if self.mod_data:
-            self.mod_data["selected"] = self.checkbox_var.get()
-            app = self.winfo_toplevel()
-            if hasattr(app, 'update_selected_count'):
-                app.update_selected_count()
-
-    def update_data(self, mod_data, pil_image=None):
-        self.mod_data = mod_data
-        self.checkbox_var.set(mod_data.get("selected", False))
-
-        if pil_image is not None:
-            try:
-                ctk_img = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=pil_image.size)
-                self.img_label.configure(image=ctk_img, text="")
-                self.img_label.image = ctk_img
-            except Exception as e:
-                self.img_label.configure(image="", text="No Preview")
-        else:
-            self.img_label.configure(image="", text="No Preview")
-
-        if mod_data.get("has_spawn_bak"):
-            spawn_tag = "  [Spawn Disabled]"
-            name_color = "#e8a435"
-        elif mod_data.get("has_spawn_txt"):
-            spawn_tag = "  [Spawnable]"
-            name_color = "#4caf50"
-        else:
-            spawn_tag = ""
-            name_color = THEME["text"]
-
-        name_text = f"{mod_data['name']}  (ID: {mod_data['id']}){spawn_tag}"
-        self.name_lbl.configure(text=name_text, text_color=name_color)
-
-        update_str = mod_data.get('update_time_str', 'Unknown')
-        tags_str = ", ".join(mod_data.get('tags_list', []))
-        if tags_str:
-            meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}  |  Tags: {tags_str}"
-        else:
-            meta_text = f"Author: {mod_data['author']}  |  Size: {mod_data['size_str']}  |  Updated: {update_str}"
-        self.meta_lbl.configure(text=meta_text)
-
-        desc = mod_data.get('description', '')
-        if len(desc) > 120:
-            desc = desc[:120] + "..."
-        self.desc_lbl.configure(text=desc)
-
-
-class TagSelectionDialog(ctk.CTkToplevel):
-    def __init__(self, master, current_tag, unique_tags, callback):
-        super().__init__(master)
-        self.title("Select Tag")
-        self.geometry("300x400")
-        self.transient(master)
-        self.grab_set()
-        
-        self.callback = callback
-        self.unique_tags = unique_tags
-        
-        self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", self.update_list)
-        
-        self.search_entry = ctk.CTkEntry(self, textvariable=self.search_var, placeholder_text="Search tags...")
-        self.search_entry.pack(fill="x", padx=10, pady=10)
-        
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color=THEME["surface"], border_color=THEME["card_border"], border_width=1)
-        self.scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        
-        self.buttons = []
-        self.update_list()
-        
-    def update_list(self, *args):
-        for btn in self.buttons:
-            btn.destroy()
-        self.buttons.clear()
-        
-        q = self.search_var.get().lower()
-        filtered = [t for t in self.unique_tags if q in t.lower()]
-        
-        if q == "" or "all tags".startswith(q):
-            btn = ctk.CTkButton(self.scroll, text="All Tags", fg_color=THEME["surface_alt"], text_color=THEME["text"], command=lambda: self.select("All Tags"))
-            btn.pack(fill="x", pady=2)
-            self.buttons.append(btn)
-            
-        for tag in filtered:
-            btn = ctk.CTkButton(self.scroll, text=tag, fg_color="transparent", text_color=THEME["text"], hover_color=THEME["surface_alt"], anchor="w", command=lambda t=tag: self.select(t))
-            btn.pack(fill="x", pady=2)
-            self.buttons.append(btn)
-            
-    def select(self, tag):
-        self.callback(tag)
-        self.destroy()
+from theme import __version__, log, THEME, button_colors
+from popup import show_info, show_error, ask_yesno, TagSelectionDialog
+from mod_card import ModFrame
 
 
 class App(ctk.CTk):
@@ -281,8 +31,7 @@ class App(ctk.CTk):
         self.mods = []
         self.mod_frame_pool = []
         self._loaded_mods_queue = []   # 背景執行緒完成後存放Result
-        self._pil_cache = {}           # PIL 圖片快取
-        self.current_folder = ""
+        self._pil_cache = collections.OrderedDict()  # PIL 圖片快取 (LRU)
         self._loading = False
         self.current_page = 1
         self.items_per_page = 50
@@ -363,6 +112,18 @@ class App(ctk.CTk):
             width=210,
         )
         self.sort_menu.pack(side="right", padx=(12, 0), pady=4)
+
+        self.search_entry = ctk.CTkEntry(
+            self.controls_frame,
+            placeholder_text="Search mod name...",
+            width=180,
+            corner_radius=6,
+            fg_color=THEME["surface_alt"],
+            border_color=THEME["card_border"],
+            text_color=THEME["text"]
+        )
+        self.search_entry.pack(side="right", padx=(12, 0), pady=4)
+        self.search_entry.bind("<KeyRelease>", self._on_search_change)
 
         # 再 pack 左側元件
         self.select_btn = ctk.CTkButton(
@@ -472,27 +233,45 @@ class App(ctk.CTk):
         self.pagination_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.pagination_frame.pack(fill="x", padx=14, pady=(0, 8))
 
+        self.first_btn = ctk.CTkButton(
+            self.pagination_frame, text="<<", width=40,
+            command=self.first_page, corner_radius=6, **button_colors("secondary"),
+        )
+        self.first_btn.pack(side="left", padx=(0, 4), pady=4)
+
         self.prev_btn = ctk.CTkButton(
-            self.pagination_frame,
-            text="Prev Page",
-            width=92,
-            command=self.prev_page,
-            corner_radius=6,
-            **button_colors("secondary"),
+            self.pagination_frame, text="<", width=40,
+            command=self.prev_page, corner_radius=6, **button_colors("secondary"),
         )
         self.prev_btn.pack(side="left", padx=0, pady=4)
 
-        self.page_label = ctk.CTkLabel(self.pagination_frame, text="Page 1 / 1",
-                                       text_color=THEME["muted"])
-        self.page_label.pack(side="left", expand=True)
+        self.page_center_frame = ctk.CTkFrame(self.pagination_frame, fg_color="transparent")
+        self.page_center_frame.pack(side="left", expand=True)
+
+        self.page_label_prefix = ctk.CTkLabel(self.page_center_frame, text="Page ", text_color=THEME["muted"])
+        self.page_label_prefix.pack(side="left")
+
+        self.page_entry_var = ctk.StringVar(value="1")
+        self.page_entry = ctk.CTkEntry(
+            self.page_center_frame, textvariable=self.page_entry_var, width=40, height=24,
+            corner_radius=4, fg_color=THEME["surface_alt"], border_color=THEME["card_border"], text_color=THEME["text"],
+            justify="center"
+        )
+        self.page_entry.pack(side="left", padx=4)
+        self.page_entry.bind("<Return>", self.jump_to_page)
+
+        self.page_label = ctk.CTkLabel(self.page_center_frame, text=" / 1", text_color=THEME["muted"])
+        self.page_label.pack(side="left")
+
+        self.last_btn = ctk.CTkButton(
+            self.pagination_frame, text=">>", width=40,
+            command=self.last_page, corner_radius=6, **button_colors("secondary"),
+        )
+        self.last_btn.pack(side="right", padx=(4, 0), pady=4)
 
         self.next_btn = ctk.CTkButton(
-            self.pagination_frame,
-            text="Next Page",
-            width=92,
-            command=self.next_page,
-            corner_radius=6,
-            **button_colors("secondary"),
+            self.pagination_frame, text=">", width=40,
+            command=self.next_page, corner_radius=6, **button_colors("secondary"),
         )
         self.next_btn.pack(side="right", padx=0, pady=4)
 
@@ -613,6 +392,7 @@ class App(ctk.CTk):
         self._progress_value = 0
         self._progress_current = 0
         self._progress_total = 0
+        self._last_progress_current = -1
         self.progress_bar.set(0)
         self.progress_label.configure(text="Scanning mod folder...")
         self.progress_pct.configure(text="0%")
@@ -627,10 +407,12 @@ class App(ctk.CTk):
     def _poll_progress(self):
         if not self._loading:
             return
-        self.progress_bar.set(self._progress_value)
-        self.progress_pct.configure(text=f"{int(self._progress_value * 100)}%")
-        if self._progress_total > 0:
-            self.progress_label.configure(text=f"Loading mods ({self._progress_current}/{self._progress_total})...")
+        if self._progress_current != getattr(self, "_last_progress_current", -1):
+            self._last_progress_current = self._progress_current
+            self.progress_bar.set(self._progress_value)
+            self.progress_pct.configure(text=f"{int(self._progress_value * 100)}%")
+            if self._progress_total > 0:
+                self.progress_label.configure(text=f"Loading mods ({self._progress_current}/{self._progress_total})...")
         self.after(100, self._poll_progress)
 
     def _load_worker(self):
@@ -707,6 +489,8 @@ class App(ctk.CTk):
 
         self.mods = loaded_mods
         self.current_page = 1
+        self._filter_dirty = True
+        self._update_spawn_counts()
         self._hide_progress()
         
         # 蒐集所有標籤
@@ -729,6 +513,9 @@ class App(ctk.CTk):
 
     def _get_filtered_mods(self):
         """根據當前分頁標籤與標籤篩選過濾模組列表"""
+        if hasattr(self, '_cached_filtered_mods') and not getattr(self, '_filter_dirty', True):
+            return self._cached_filtered_mods
+            
         filtered = self.mods
         if self.current_tab == "Spawn Disabled":
             filtered = [m for m in filtered if m.get("has_spawn_bak")]
@@ -738,7 +525,24 @@ class App(ctk.CTk):
         if self.current_tag != "All Tags":
             filtered = [m for m in filtered if self.current_tag in m.get("tags_list", [])]
             
+        search_q = self.search_entry.get().lower().strip()
+        if search_q:
+            filtered = [m for m in filtered if search_q in m.get("name", "").lower() or search_q in m.get("author", "").lower()]
+            
+        self._cached_filtered_mods = filtered
+        self._filter_dirty = False
         return filtered
+
+    def _on_search_change(self, *args):
+        self._filter_dirty = True
+        self.current_page = 1
+        if hasattr(self, '_search_after_id'):
+            self.after_cancel(self._search_after_id)
+        self._search_after_id = self.after(300, self._render_page)
+
+    def _update_spawn_counts(self):
+        self._spawn_disabled_count = sum(1 for m in self.mods if m.get("has_spawn_bak"))
+        self._spawnable_count = sum(1 for m in self.mods if m.get("has_spawn_txt"))
 
     def _render_page(self):
         """根據 self.current_page 渲染對應的 50 個模組卡片"""
@@ -750,18 +554,19 @@ class App(ctk.CTk):
         filtered_mods = self._get_filtered_mods()
         
         # 更新分頁標籤的計數
-        spawn_disabled_count = sum(1 for m in self.mods if m.get("has_spawn_bak"))
-        spawnable_count = sum(1 for m in self.mods if m.get("has_spawn_txt"))
+        if not hasattr(self, '_spawn_disabled_count'):
+            self._update_spawn_counts()
+            
         if self.current_tab == "Spawn Disabled":
             self.tab_count_label.configure(text=f"Showing {len(filtered_mods)} spawn-disabled mods")
         elif self.current_tab == "Spawnable":
             self.tab_count_label.configure(text=f"Showing {len(filtered_mods)} spawnable mods")
         else:
             tags = []
-            if spawnable_count > 0:
-                tags.append(f"{spawnable_count} spawnable")
-            if spawn_disabled_count > 0:
-                tags.append(f"{spawn_disabled_count} disabled")
+            if self._spawnable_count > 0:
+                tags.append(f"{self._spawnable_count} spawnable")
+            if self._spawn_disabled_count > 0:
+                tags.append(f"{self._spawn_disabled_count} disabled")
             
             if tags:
                 self.tab_count_label.configure(text=f"({', '.join(tags)})")
@@ -783,15 +588,21 @@ class App(ctk.CTk):
             
             # Lazy load image
             preview = mod.get("preview_path")
-            pil_img = self._pil_cache.get(preview)
-            if preview and pil_img is None and os.path.exists(preview):
-                try:
-                    img = Image.open(preview)
-                    img.thumbnail((120, 90))
-                    self._pil_cache[preview] = img
-                    pil_img = img
-                except Exception:
-                    pass
+            pil_img = None
+            if preview:
+                if preview in self._pil_cache:
+                    pil_img = self._pil_cache.pop(preview)
+                    self._pil_cache[preview] = pil_img
+                elif os.path.exists(preview):
+                    try:
+                        img = Image.open(preview)
+                        img.thumbnail((120, 90))
+                        self._pil_cache[preview] = img
+                        pil_img = img
+                        if len(self._pil_cache) > 200:
+                            self._pil_cache.popitem(last=False)
+                    except Exception:
+                        pass
 
             if i < len(self.mod_frame_pool):
                 frame = self.mod_frame_pool[i]
@@ -803,14 +614,17 @@ class App(ctk.CTk):
             frame.pack(fill="x", pady=4, padx=2)
             
         # 4. 更新分頁標籤與按鈕狀態
-        self.page_label.configure(text=f"Page {self.current_page} / {total_pages}")
+        self.page_entry_var.set(str(self.current_page))
+        self.page_label.configure(text=f" / {total_pages}")
 
         selected_count = sum(1 for m in filtered_mods if m.get("selected"))
         if hasattr(self, 'selected_count_label'):
             self.selected_count_label.configure(text=f"Selected: {selected_count} / {total_items}")
 
+        self.first_btn.configure(state="normal" if self.current_page > 1 else "disabled")
         self.prev_btn.configure(state="normal" if self.current_page > 1 else "disabled")
         self.next_btn.configure(state="normal" if self.current_page < total_pages else "disabled")
+        self.last_btn.configure(state="normal" if self.current_page < total_pages else "disabled")
         
         # 滾動回頂部 (這在 CTk 中通常沒問題，但某些版本需要 update_idletasks)
         try:
@@ -818,16 +632,47 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    def first_page(self):
+        if self.current_page > 1:
+            self.current_page = 1
+            self._render_page()
+
     def prev_page(self):
         if self.current_page > 1:
             self.current_page -= 1
             self._render_page()
 
     def next_page(self):
-        total_pages = max(1, (len(self.mods) + self.items_per_page - 1) // self.items_per_page)
+        filtered_mods = self._get_filtered_mods()
+        total_pages = max(1, (len(filtered_mods) + self.items_per_page - 1) // self.items_per_page)
         if self.current_page < total_pages:
             self.current_page += 1
             self._render_page()
+            
+    def last_page(self):
+        filtered_mods = self._get_filtered_mods()
+        total_pages = max(1, (len(filtered_mods) + self.items_per_page - 1) // self.items_per_page)
+        if self.current_page < total_pages:
+            self.current_page = total_pages
+            self._render_page()
+
+    def jump_to_page(self, event):
+        val = self.page_entry_var.get().strip()
+        filtered_mods = self._get_filtered_mods()
+        total_pages = max(1, (len(filtered_mods) + self.items_per_page - 1) // self.items_per_page)
+        try:
+            p = int(val)
+            if p < 1:
+                p = 1
+            elif p > total_pages:
+                p = total_pages
+            if self.current_page != p:
+                self.current_page = p
+                self._render_page()
+            else:
+                self.page_entry_var.set(str(self.current_page))
+        except ValueError:
+            self.page_entry_var.set(str(self.current_page))
 
     def _enable_buttons(self):
         self.select_btn.configure(state="normal")
@@ -838,19 +683,8 @@ class App(ctk.CTk):
         self.script_btn.configure(state="normal")
 
     def _show_progress(self):
-        """顯示進度列：重新排列 pack 順序以避免 CTkScrollableFrame 的 before= 問題"""
-        self.progress_frame.pack_forget()
-        self.tab_frame.pack_forget()
-        self.scroll_frame.pack_forget()
-        self.pagination_frame.pack_forget()
-        self.bottom_frame.pack_forget()
-        self.inst_frame.pack_forget()
-        self.progress_frame.pack(fill="x", padx=14, pady=(0, 8))
-        self.tab_frame.pack(fill="x", padx=14, pady=(0, 6))
-        self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
-        self.pagination_frame.pack(fill="x", padx=14, pady=(0, 8))
-        self.bottom_frame.pack(fill="x", padx=14, pady=(0, 8))
-        self.inst_frame.pack(fill="x", padx=16, pady=(0, 12))
+        """顯示進度列"""
+        self.progress_frame.pack(before=self.tab_frame, fill="x", padx=14, pady=(0, 8))
 
     def _hide_progress(self):
         """隱藏進度列"""
@@ -969,7 +803,8 @@ class App(ctk.CTk):
         if len(unavail_info) > 20:
             display_list += f"\n  ... and {len(unavail_info) - 20} others"
 
-        msg = (f"Found {len(unavailable_ids)} unavailable mods! They have been selected.")
+        msg = (f"Found {len(unavailable_ids)} unavailable mods! They have been selected.\n\n"
+               f"{display_list}")
                
         self._render_page()
         show_info(self, "Scan Result", msg)
@@ -1030,12 +865,14 @@ class App(ctk.CTk):
     def _on_tag_change(self, value):
         self.current_tag = value
         self.current_page = 1
+        self._filter_dirty = True
         self.tag_combobox.configure(text=f"Tag: {value[:10]}... ▾" if len(value) > 12 else f"Tag: {value} ▾")
         self._render_page()
 
     def _on_tab_change(self, value):
         self.current_tab = value
         self.current_page = 1
+        self._filter_dirty = True
         self._render_page()
 
     # ─────────────────── Spawnable 管理 ───────────────────
@@ -1077,6 +914,8 @@ class App(ctk.CTk):
             m["has_spawn_bak"] = os.path.exists(spawn_bak)
             m["selected"] = False
         self.select_all_var.set(False)
+        self._filter_dirty = True
+        self._update_spawn_counts()
         self._render_page()
 
     def _check_for_updates(self):
@@ -1088,9 +927,16 @@ class App(ctk.CTk):
                 latest_version = data.get("tag_name", "")
                 html_url = data.get("html_url", "")
                 
-                # 簡單的比對，如果 tag_name 大於 __version__，或者是不同且都不為空
-                if latest_version and latest_version.startswith("v") and latest_version != __version__:
-                    self.after(0, self._show_update_available, latest_version, html_url)
+                # 語意化版本比對
+                def parse_version(v_str):
+                    try:
+                        return tuple(int(x) for x in v_str.lstrip('vV').split('.'))
+                    except ValueError:
+                        return (0,)
+
+                if latest_version and latest_version.startswith("v"):
+                    if parse_version(latest_version) > parse_version(__version__):
+                        self.after(0, self._show_update_available, latest_version, html_url)
         except Exception as e:
             log.warning(f"Failed to check for updates: {e}")
 

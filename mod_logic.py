@@ -4,6 +4,9 @@ import requests
 import json
 import time
 from datetime import datetime
+import logging
+
+log = logging.getLogger("TDModManager")
 
 def parse_info_txt(file_path):
     """解析 info.txt，嘗試多種編碼以避免亂碼問題"""
@@ -43,14 +46,12 @@ def get_folder_size(folder_path):
     """計算資料夾大小 (位元組)"""
     total_size = 0
     try:
-        for dirpath, _, filenames in os.walk(folder_path):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
-                if not os.path.islink(fp):
-                    try:
-                        total_size += os.path.getsize(fp)
-                    except OSError:
-                        pass
+        with os.scandir(folder_path) as it:
+            for entry in it:
+                if entry.is_file(follow_symlinks=False):
+                    total_size += entry.stat(follow_symlinks=False).st_size
+                elif entry.is_dir(follow_symlinks=False):
+                    total_size += get_folder_size(entry.path)
     except OSError:
         pass
     return total_size
@@ -66,13 +67,11 @@ def format_size(size_bytes):
 def scan_mod_folders(mod_dir):
     """快速掃描取得所有模組資料夾 ID 清單 (不做耗時操作)"""
     folders = []
-    if not os.path.isdir(mod_dir):
-        return folders
     try:
-        for item in os.listdir(mod_dir):
-            mod_path = os.path.join(mod_dir, item)
-            if os.path.isdir(mod_path) and item.isdigit():
-                folders.append(item)
+        with os.scandir(mod_dir) as it:
+            for entry in it:
+                if entry.is_dir() and entry.name.isdigit():
+                    folders.append(entry.name)
     except OSError:
         pass
     return folders
@@ -173,6 +172,9 @@ def check_unavailable_mods_api(mod_ids, progress_callback=None):
     total_batches = (len(mod_ids) + batch_size - 1) // batch_size
     processed = 0
 
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Teardown-Mod-Manager/1.2"})
+
     for i in range(0, len(mod_ids), batch_size):
         batch = mod_ids[i:i+batch_size]
         data = {"itemcount": len(batch)}
@@ -183,7 +185,7 @@ def check_unavailable_mods_api(mod_ids, progress_callback=None):
         for attempt in range(max_retries):
             try:
                 url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
-                response = requests.post(url, data=data, timeout=15)
+                response = session.post(url, data=data, timeout=15)
                 if response.status_code == 200:
                     resp_data = response.json().get("response", {})
                     details = resp_data.get("publishedfiledetails", [])
@@ -197,9 +199,9 @@ def check_unavailable_mods_api(mod_ids, progress_callback=None):
                             unavailable_ids.append(item_id)
                     break  # Success, break out of retry loop
                 else:
-                    print(f"API request failed with status {response.status_code}, attempt {attempt+1}")
+                    log.warning(f"API request failed with status {response.status_code}, attempt {attempt+1}")
             except Exception as e:
-                print(f"Error checking Steam API: {e}, attempt {attempt+1}")
+                log.error(f"Error checking Steam API: {e}, attempt {attempt+1}")
                 if attempt < max_retries - 1:
                     time.sleep(2)  # Backoff before retry
 
@@ -223,14 +225,14 @@ def delete_local_mods(mod_paths, expected_base_folder):
         # 1. 確保該路徑的父資料夾與使用者選擇的資料夾一致 (防止跨目錄刪除)
         # 2. 確保資料夾名稱全部是數字 (Steam Workshop 的標準命名)
         if parent_dir != expected_base_folder or not folder_name.isdigit():
-            print(f"Safety block: Skipping deletion of {path}")
+            log.warning(f"Safety block: Skipping deletion of {path}")
             continue
 
         try:
             shutil.rmtree(path)
             deleted_count += 1
         except Exception as e:
-            print(f"Error deleting {path}: {e}")
+            log.error(f"Error deleting {path}: {e}")
     return deleted_count
 
 
@@ -247,7 +249,7 @@ def disable_spawnables(mod_paths):
                 os.rename(spawn_txt, spawn_bak)
                 success_count += 1
             except Exception as e:
-                print(f"Error disabling spawn for {mod_path}: {e}")
+                log.error(f"Error disabling spawn for {mod_path}: {e}")
     return success_count
 
 
@@ -264,5 +266,5 @@ def recover_spawnables(mod_paths):
                 os.rename(spawn_bak, spawn_txt)
                 success_count += 1
             except Exception as e:
-                print(f"Error recovering spawn for {mod_path}: {e}")
+                log.error(f"Error recovering spawn for {mod_path}: {e}")
     return success_count
